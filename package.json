@@ -1,0 +1,27 @@
+{
+	"name": "node-dwe",
+	"description": "Node.js debugger, powered by Electron",
+	"version": "0.1.0",
+	"license": "MIT",
+	"author": "Niklas Gollenstede",
+
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/NiklasGollenstede/node-dwe"
+	},
+
+	"bin": {
+		"node-dwe": "bin/node-dwe"
+	},
+	"main": "debugger.js",
+
+	"dependencies": {
+		"electron-devtools-installer": "2.0.1",
+		"global-modules": "0.2.3"
+	},
+	"devDependencies": {
+	},
+	"scripts": {
+		"postinstall": "echo \"make sure to install electron globally\""
+	}
+}
