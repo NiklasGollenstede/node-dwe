@@ -14,22 +14,34 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 		return { };
 	} })(cwd);
 
-	let entry = require.resolve(cwd +'/'+ (process.argv[2] || ''));
+	let args = [ ], i = 2;
+	while (i < process.argv.length && process.argv[i].startsWith('-')) {
+		args.push(process.argv[i++]);
+	}
+	const detach = args.includes('-d');
+
+	let entry = require.resolve(cwd +'/'+ (process.argv[args.length + 2] || ''));
 	if (entry === __filename) { entry = require.resolve(cwd +'/index.js'); }
 
 	const electron = require('child_process').spawn(
 		require(require('global-modules') +'/electron'), // path to the globally installed electron binary
 		[
-			__dirname, // the 'app', reads the "main" key from the `package.json` of this project
+			__dirname, // the 'app', reads the "main" key from the `package.json` of this project which points back to this file
 			entry, // resolved path to the entry .js file
-			JSON.stringify(process.argv.slice(3)), // forward other args
+			JSON.stringify(process.argv.slice(args.length + 3)), // forward other args
 			JSON.stringify({ // other options
 				title: typeof json.title === 'string' ? json.title : typeof json.name === 'string' ? json.name : null,
 				// hidden: true,
 			}),
-		],
-		{ cwd: cwd, env: process.env, detached: true, }
+		], {
+			cwd: cwd,
+			env: process.env,
+			detached: true,
+			stdio: detach ? 'ignore' : [ 'ignore', 'pipe', 'pipe', ],
+		}
 	);
+
+	if (detach) { electron.unref(); return; }
 
 	electron.on('error', error => console.error(error));
 	electron.stdout.pipe(process.stdout);
@@ -87,10 +99,12 @@ function bootstrap(entry, args) { try {
 
 	// set entry as the main module
 	const ext = Path.extname(__filename) || '.js';
+	const { cache, } = require;
 	const loader = require.main.constructor._extensions[ext];
 	require.main.constructor._extensions[ext] = function(module, filename) {
 		window.require = module.require.bind(module);
 		require.main = process.mainModule = module;
+		require.cache = cache;
 		module.id = '.'; module.parent = null;
 		require.main.constructor._extensions[ext] = loader;
 		return loader(...arguments);
@@ -102,7 +116,7 @@ function bootstrap(entry, args) { try {
 			<body style="background:#690c0c;color:white;font-family:sans-serif;"><script>
 				const message = 'Process was exited with code ${ +code }';
 				console.log(message); document.write('<h3>'+ message +'<br></h3>');
-				document.write('<h2><a style="color:#9c95fb" href="javascript:history.back();">RESTART</a></h2>');
+				document.write('<h2><a style="color:#9c95fb" href="${ window.location.href  }">RESTART</a></h2>');
 			<\/script>
 		`);
 	};
