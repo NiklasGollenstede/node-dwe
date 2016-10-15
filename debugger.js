@@ -15,10 +15,11 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 	} })(cwd);
 
 	let args = [ ], i = 2;
-	while (i < process.argv.length && process.argv[i].startsWith('-')) {
+	while (i < process.argv.length && process.argv[i].startsWith('--')) {
 		args.push(process.argv[i++]);
 	}
-	const detach = args.includes('-d');
+	const detach = args.includes('--detach');
+	const hidden = args.includes('--hidden');
 
 	let entry = require.resolve(cwd +'/'+ (process.argv[args.length + 2] || ''));
 	if (entry === __filename) { entry = require.resolve(cwd +'/index.js'); }
@@ -31,7 +32,7 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 			JSON.stringify(process.argv.slice(args.length + 3)), // forward other args
 			JSON.stringify({ // other options
 				title: typeof json.title === 'string' ? json.title : typeof json.name === 'string' ? json.name : null,
-				// hidden: true,
+				hidden: hidden,
 			}),
 		], {
 			cwd: cwd,
