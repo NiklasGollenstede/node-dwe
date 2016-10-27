@@ -1,71 +1,52 @@
 'use strict'; /* globals process, __dirname, __filename, require, module, Buffer */
-const { resolve, } = require('path');
+const { resolve, join, } = require('path');
+const globalPath = require('global-modules');
+const readFile = require('fs').readFileSync;
+const options = JSON.parse(process.argv[2]);
+const content = { globalPath, args: options.args.slice(), };
 
-if (!('electron' in process.versions)) { // started as node.js program, launch electron app
-	const cwd = process.cwd();
+try {
+	const cwd = content.cwd = options.cwd;
+	const paths = getPaths(cwd);
+	const isWindows = process.platform === 'win32';
 
 	// try to get the closest `package.json`
-	const readJSON = (read => path => { return JSON.parse(read(path, 'utf8')); })(require('fs').readFileSync);
-	const { json, } = findPackageJson(cwd);
+	const json = findOnPaths(paths, path => JSON.parse(readFile(join(path, 'package.json' ), 'utf8'))).value || { };
+	options.title = typeof json.title === 'string' ? json.title : typeof json.name === 'string' ? json.name : null;
 
-	let args = [ ], i = 2;
-	while (i < process.argv.length && process.argv[i].startsWith('--')) {
-		args.push(process.argv[i++]);
-	}
-	const detach = !args.includes('--blocking');
-	const hidden = args.includes('--hidden');
-	const bin = (args.find(_=>_.startsWith('--bin=')) || '').slice('--bin='.length);
-
-	let progName, subProg, progArgs, entryFile;
-	if (bin) {
-		[ progName, subProg, ] = bin.split(':');
-		// resolve progName and read it's package.json
-		let json, path = resolveFrom(cwd, progName);
-		({ json, path, } = findPackageJson(path));
-		// read the .bin entry
-		entryFile = typeof json.bin === 'object' ? json.bin[subProg || progName] : json.bin;
-		if (!entryFile) { throw new Error(`Could not resolve --bin=${ bin }`); }
-		entryFile = resolve(path, entryFile);
-		progArgs = [ progName, ...process.argv.slice(args.length + 2), ];
-	} else {
-		if ((progName = process.argv[args.length + 2])) {
-			entryFile = require.resolve(cwd +'/'+ progName);
-			progArgs = [ entryFile, ...process.argv.slice(args.length + 3), ];
+	// set content.entry
+	if (options.bin) {
+		const ext = isWindows ? '.cmd' : '';
+		let { path, value: file, } = findOnPaths(paths, (path, isLast) => readFile(join(path, isLast ? '.' : 'node_modules/.bin', options.bin + ext), 'utf8'));
+		if (isWindows) {
+			const path2 = file && ((/node\.exe"[\s]+"%~dp0\\([^"]+)/).exec(file) || [ ])[1];
+			if (!path2) { throw new Error(`Could not find binary "${ options.bin }" from "${ cwd }"`); }
+			path = join(path, path === join(globalPath, '..') ? '.' : 'node_modules/.bin', path2);
 		} else {
-			entryFile = cwd;
+			if (!path) {
+				path = require('which').sync(options.bin);
+			}
+		}
+		content.entry = path;
+		content.args.unshift(options.bin);
+	} else {
+		if (options.args.length) {
+			content.entry = require.resolve(cwd +'/'+ options.args[0]);
+			content.args.splice(0, 1, content.entry);
+		} else {
+			content.entry = null;
 		}
 	}
+} catch (error) {
+	console.error(error);
+	if (error instanceof Error) {
+		content.exception = { name: error.name, message: error.message, stack: error.stack, };
+	} else {
+		throw error;
+	}
+}
 
-	const electron = require('child_process').spawn(
-		require(require('global-modules') +'/electron'), // path to the globally installed electron binary
-		[
-			__dirname, // the 'app', reads the "main" key from the `package.json` of this project which points back to this file
-			entryFile, // resolved path to the entry .js file
-			JSON.stringify(progArgs), // forward other args
-			JSON.stringify({ // other options
-				title: typeof json.title === 'string' ? json.title : typeof json.name === 'string' ? json.name : null,
-				progName, hidden,
-			}),
-		], {
-			cwd: cwd,
-			env: process.env,
-			detached: true,
-			stdio: detach ? 'ignore' : [ 'ignore', 'pipe', 'pipe', ],
-		}
-	);
-
-	if (detach) { electron.unref(); return; }
-
-	electron.on('error', error => console.error(error));
-	electron.stdout.pipe(process.stdout);
-	electron.stderr.pipe(process.stderr);
-
-} else { // started as electron app
-	// process.argv[1] === __dirname
-	const entry = process.argv[2];
-	const args = process.argv[3];
-	const options = JSON.parse(process.argv[4]);
-
+{
 	const Electron = require('electron');
 	const { app: App, BrowserWindow, } = Electron;
 	let win = null;
@@ -76,7 +57,7 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 		win = new BrowserWindow({
 			width: Math.min(width, height * 1.25) << 0,
 			height: Math.min(height, width) << 0,
-			title: [ options.progName, options.title, 'Debugger', ].filter(_=>_&&_!=='.').join(' - '),
+			title: [ options.bin || options.args[0], options.title, 'Debugger', ].filter(_=>_&&_!=='.').join(' - '),
 			autoHideMenuBar: true,
 			show: !options.hidden,
 		});
@@ -85,7 +66,7 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 		win.openDevTools({ detach: !!options.hidden, });
 		win.webContents.once('devtools-opened', () => win.loadURL(`data:text/html;base64,`+ new Buffer(`
 			<body style="background:#222"><script>'use strict';
-				(${ bootstrap })(${ JSON.stringify(entry) }, ${ args })
+				(${ bootstrap })(${ JSON.stringify(content) })
 			</script></body>
 		`).toString('base64')));
 
@@ -100,9 +81,15 @@ if (!('electron' in process.versions)) { // started as node.js program, launch e
 }
 
 // this is loaded inside the content process
-function bootstrap(entry, args) { try {
+function bootstrap({ entry, args, cwd, globalPath, exception, }) { try {
 	const Path = require('path');
 	const Module = module.constructor;
+
+	if (exception) {
+		// log previous error
+		console.error(Object.assign(new window[exception.name](exception.message), exception));
+		if (!cwd) { return; } entry = null; args = args || [ ];
+	}
 
 	// stop process.exit() from ending the process, navigate instead
 	process.reallyExit = function reallyExit(code) {
@@ -118,21 +105,21 @@ function bootstrap(entry, args) { try {
 	};
 
 	// replace the electron args with those meant for node
+	process.argv.splice(1, Infinity, ...args);
 	// and set __filename and __dirname for the console
-	if (args) {
-		process.argv.splice(1, Infinity, ...args);
+	if (entry) {
 		window.__filename = entry;
 		window.__dirname = Path.resolve(entry, '..');
 	} else {
-		window.__dirname = entry;
-		window.__filename = entry + Path.sep +'.';
+		window.__dirname = cwd;
+		window.__filename = cwd + Path.sep +'.';
 		process.argv.splice(1, Infinity);
 	}
 
-	if (!args) { // no args ==> nothing to require(), just set the correct environment
+	if (!entry) { // no entry ==> nothing to require(), just set the correct environment
 		const module = new Module;
 		module.filename = __filename; module.loaded = true;
-		let paths = module.paths = [ ], parent = entry, path = entry; do {
+		let paths = module.paths = [ ], parent = cwd, path = cwd; do {
 			paths.push(Path.resolve(path = parent, 'node_modules'));
 		} while ((parent = Path.resolve(path, '..')) && parent !== path);
 		console.info('running in', __dirname);
@@ -167,6 +154,7 @@ function bootstrap(entry, args) { try {
 		require.resolve = function resolve(request) { return Module._resolveFilename(request, module); };
 		require.extensions = Module._extensions;
 		require.cache = Module._cache;
+		require.global = module => require(Path.join(globalPath, module));
 
 		window.module = process.mainModule = module;
 		module.id = '.'; module.parent = null;
@@ -175,28 +163,21 @@ function bootstrap(entry, args) { try {
 	console.error('Uncaught', error);
 } }
 
-function findPackageJson(start) {
-	const readJSON = (read => path => { return JSON.parse(read(path, 'utf8')); })(require('fs').readFileSync);
-	return (function find(path) { try {
-		return { path, json: readJSON(path +'/package.json'), };
-	} catch (_) {
-		const parent = resolve(path, '..');
-		if (parent && parent !== path) { return find(parent); }
-		return { };
-	} })(start) || { };
-}
-
-// attempts to locally resolve `request`from the given `path` the same way node.js does, and tries the global modules if that fails
-function resolveFrom(path, request) {
-	const _module = { filename: path +'/index.js', id: path +'/index.js', };
-	const paths = _module.paths = [ resolve(path, 'node_modules'), ];
+function getPaths(path) {
+	const paths = [ path, ];
 	let parent = path;
 	while ((parent = resolve(path, '..')) && parent !== path) {
-		paths.push(resolve(path = parent, 'node_modules'));
+		paths.push(path = parent);
 	}
-	try {
-		return module.constructor._resolveFilename(request, _module);
-	} catch (error) { try {
-		return require.resolve(require('global-modules') +'/'+ request);
-	} catch (_) { throw error; } } // throw the original error
+	paths.push(resolve(globalPath, '..'));
+	return paths;
+}
+
+function findOnPaths(paths, find) {
+	let value, last = paths[paths.length - 1];
+	for (let path of paths) {
+		try { value = find(path, path === last); } catch (_) { }
+		if (value != null) { return { value, path, }; }
+	}
+	return { };
 }

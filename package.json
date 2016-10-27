@@ -1,5 +1,6 @@
 {
 	"name": "node-dwe",
+	"title": "Node.js - Debug With Electron",
 	"description": "Node.js debugger, powered by Electron",
 	"version": "0.2.0",
 	"license": "MIT",
@@ -16,8 +17,11 @@
 	"main": "debugger.js",
 
 	"dependencies": {
+		"command-line-args": "3.0.1",
+		"command-line-usage": "3.0.5",
 		"electron-devtools-installer": "2.0.1",
-		"global-modules": "0.2.3"
+		"global-modules": "0.2.3",
+		"which": "1.2.11"
 	},
 	"devDependencies": {
 	},
