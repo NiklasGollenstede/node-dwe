@@ -3,7 +3,11 @@ const { resolve, join, } = require('path');
 const globalPath = require('global-modules');
 const readFile = require('fs').readFileSync;
 const options = JSON.parse(process.argv[2]);
-const content = { globalPath, args: options.args.slice(), };
+const content = {
+	globalPath,
+	args: options.args.slice(),
+	pause: !!options.pause,
+};
 
 try {
 	const cwd = content.cwd = options.cwd;
@@ -81,7 +85,7 @@ try {
 }
 
 // this is loaded inside the content process
-function bootstrap({ entry, args, cwd, globalPath, exception, }) { try {
+function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
 	const Path = require('path');
 	const Module = module.constructor;
 
@@ -116,6 +120,9 @@ function bootstrap({ entry, args, cwd, globalPath, exception, }) { try {
 		process.argv.splice(1, Infinity);
 	}
 
+	// clear all electron modules from cache
+	Object.keys(require.cache).forEach(key => delete require.cache[key]);
+
 	if (!entry) { // no entry ==> nothing to require(), just set the correct environment
 		const module = new Module;
 		module.filename = __filename; module.loaded = true;
@@ -132,7 +139,14 @@ function bootstrap({ entry, args, cwd, globalPath, exception, }) { try {
 	Module._extensions[ext] = function(module, filename) {
 		Module._extensions[ext] = loader;
 		setMainModule(module);
-		return loader(...arguments);
+		let wrap = pause && Module.wrap; // inject debugger; statement
+		wrap && (Module.wrap = code => {
+			Module.wrap = wrap; wrap = null;
+			return '(function (exports, require, module, __filename, __dirname, process, global) { debugger; '+ code +'\n});';
+		});
+		const result = loader(...arguments);
+		wrap && (Module.wrap = wrap); // just in case
+		return result;
 	};
 
 	// load the main module
