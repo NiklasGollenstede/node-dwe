@@ -53,6 +53,7 @@ try {
 {
 	const Electron = require('electron');
 	const { app: App, BrowserWindow, } = Electron;
+	(options['exec-args'] || options.execArgs) && App.commandLine.appendSwitch('js-flags', (options['exec-args'] || options.execArgs || [ ]).map(_=>_.replace(/^-?-?/, '--')).join(' '));
 	let win = null;
 
 	new Promise(ready => App.isReady() ? ready() : App.once('ready', ready)).then(() => {

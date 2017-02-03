@@ -2,7 +2,7 @@
 	"name": "node-dwe",
 	"title": "Node.js - Debug With Electron",
 	"description": "Node.js debugger, powered by Electron",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"license": "MIT",
 	"author": "Niklas Gollenstede",
 
@@ -26,6 +26,7 @@
 	"devDependencies": {
 	},
 	"scripts": {
+		"prepublish": "node -e \"if((/\\r\\n/).test(require('fs').readFileSync('./bin/node-dwe','utf-8'))){throw 'The bin file must not contain any RCLF!';}\"",
 		"postinstall": "echo \"make sure to install electron globally\""
 	}
 }

@@ -16,6 +16,7 @@ const optionList = [
 	{ name: 'bin',       alias: 'b', _type: String,  typeLabel: 'string',                          description: 'Name of a local or global bin module to call.', },
 	{ name: 'detach',    alias: 'd', _type: Bool,    typeLabel: 'bool',       defaultValue: true,  description: 'Detach from the electron process.', },
 	{ name: 'pause',     alias: 'p', _type: Bool,    typeLabel: 'bool',                            description: 'Break on the first line of the entry script.', },
+	{ name: 'exec-args', alias: 'e', _type: String,  typeLabel: 'strings',    multiple: true,      description: 'Arguments that are passed as execArgs to the electron process, without the leading \'--\', e.g. -e harmony max-old-space-size=2048', },
 	{ name: 'hidden',                _type: Bool,    typeLabel: 'bool',                            description: 'Hide the electron main window and only show the debugger.', },
 ];
 const optionsObject = optionList.reduce((obj, opt) => ((obj[opt.name] = obj[opt.alias] = opt), obj), { });
@@ -60,12 +61,17 @@ function parseArgs(args) {
 	}
 	const progArgs = args.splice(splitAt, Infinity);
 
-	const options = require('command-line-args')(optionList, args); // TODO: catch (...)
+	let options; try {
+		options = require('command-line-args')(optionList, args); // TODO: catch (...)
+	} catch (error) { return error && error.message || 'Invaid options'; }
 	for (let key of Object.keys(options)) {
 		if (!optionsObject[key]._type) { continue; }
 		try {
-			// console.log('mapping', key, 'from', options[key], 'to', optionsObject[key]._type(options[key]));
-			options[key] = optionsObject[key]._type(options[key]);
+			options[key] = optionsObject[key].multiple
+			? Array.isArray(options[key])
+			? options[key].map(optionsObject[key]._type)
+			: [ optionsObject[key]._type(options[key]), ]
+			: optionsObject[key]._type(options[key]);
 		} catch (string) { return `Invalid value for option ${ key }: ${ string.message || string }`; }
 	}
 	options.args = progArgs;
@@ -99,14 +105,14 @@ function showInfo(errorMessage) {
 		{
 			header: 'Examples',
 			content: (
-			   `  Start the local 'server.js' with args --argv2 -f oo:
+			   `  Start the local 'server.js' with args "--argv2 -f oo":
 				  $ node-dwe server.js --argv2 -f oo
 
 				  Search for a local or global '_mocha' bin and run it with 'test/unit':
 				  $ node-dwe --bin _mocha test/unit
 
-				  Start the local file '--bad-name.js' and break on it's first line:
-				  $ node-dwe -b -- --bad-name`
+				  Enable harmony features, expand garbage allowance, start the local file 'index.js' and break on it's first line:
+				  $ node-dwe -p -e harmony max-old-space-size=2048 -- index`
 			).split(/$\r?\n?\r?^\t*/m).join('\n'),
 			raw: true,
 		},
