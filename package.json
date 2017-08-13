@@ -2,31 +2,35 @@
 	"name": "node-dwe",
 	"title": "Node.js - Debug With Electron",
 	"description": "Node.js debugger, powered by Electron",
-	"version": "0.2.1",
+	"version": "0.3.0",
 	"license": "MIT",
 	"author": "Niklas Gollenstede",
-
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/NiklasGollenstede/node-dwe"
 	},
-
 	"bin": {
 		"node-dwe": "bin/node-dwe"
 	},
 	"main": "debugger.js",
-
 	"dependencies": {
 		"command-line-args": "3.0.1",
 		"command-line-usage": "3.0.5",
-		"electron-devtools-installer": "2.0.1",
+		"electron-ipc-stream": "0.2.0",
 		"global-modules": "0.2.3",
 		"which": "1.2.11"
 	},
 	"devDependencies": {
+		"babel-eslint": "7.1.1",
+		"eslint": "3.14.1",
+		"eslintrc": "NiklasGollenstede/eslintrc"
 	},
 	"scripts": {
-		"prepublish": "node -e \"if((/\\r\\n/).test(require('fs').readFileSync('./bin/node-dwe','utf-8'))){throw 'The bin file must not contain any RCLF!';}\"",
-		"postinstall": "echo \"make sure to install electron globally\""
+		"prepublishOnly": "node -e \"if((/\\r\\n/).test(require('fs').readFileSync('./bin/node-dwe','utf-8'))){throw 'The bin file must not contain any RCLF!';}\"",
+		"postinstall": "echo \"make sure to install electron globally\"",
+		"lint": "eslint --ignore-path .gitignore ."
+	},
+	"eslintConfig": {
+		"extends": "./node_modules/eslintrc/node.js"
 	}
 }

@@ -4,7 +4,7 @@ function Bool(bool) {
 	switch (bool) {
 		case false: case 'false': case '0': case 0: case '!1': case '':                    return false;
 		case true:  case 'true':  case '1': case 1: case '!0': case null: case undefined:  return true;
-		default: throw `invalid bool "${ bool }"`;
+		default: throw new Error(`invalid bool "${ bool }"`);
 	}
 }
 function isBoolString(string) {
@@ -14,12 +14,13 @@ function isBoolString(string) {
 const optionList = [
 	{ name: 'help',      alias: 'h', _type: Bool,    typeLabel: 'bool',                            description: 'Display this message and exit.', },
 	{ name: 'bin',       alias: 'b', _type: String,  typeLabel: 'string',                          description: 'Name of a local or global bin module to call.', },
-	{ name: 'detach',    alias: 'd', _type: Bool,    typeLabel: 'bool',       defaultValue: true,  description: 'Detach from the electron process.', },
+	{ name: 'detach',    alias: 'd', _type: Bool,    typeLabel: 'bool',       defaultValue: true,  description: 'Detach from the electron process. Default: true', },
+	{ name: 'pipe',                  _type: String,  typeLabel: 'flags',      defaultValue: '',    description: 'Pipes the stdio between the CLI and debugger process. Pass as string including i for stdin, o for stdout, e for stderr, c to include console output. Forces --detach to false', },
 	{ name: 'pause',     alias: 'p', _type: Bool,    typeLabel: 'bool',                            description: 'Break on the first line of the entry script.', },
 	{ name: 'exec-args', alias: 'e', _type: String,  typeLabel: 'strings',    multiple: true,      description: 'Arguments that are passed as execArgs to the electron process, without the leading \'--\', e.g. -e harmony max-old-space-size=2048', },
 	{ name: 'hidden',                _type: Bool,    typeLabel: 'bool',                            description: 'Hide the electron main window and only show the debugger.', },
 ];
-const optionsObject = optionList.reduce((obj, opt) => ((obj[opt.name] = obj[opt.alias] = opt), obj), { });
+const optionsObject = optionList.reduce((obj, opt) => ((obj[opt.name] = (obj[opt.alias] = opt)), obj), { });
 
 function getProcessOptions() {
 	const args = process.argv.slice(2);
@@ -45,16 +46,16 @@ function parseArgs(args) {
 				const name = args[i].slice(2);
 				if (name.includes('=')) { continue; }
 				const option = optionList.find(_=>_.name === name);
-				if (!option) { return (`Invaid option "${ args[i] }`); } // invalid option
+				if (!option) { return (`Invaid option "${ args[i] }"`); } // invalid option
 				if (option._type === Bool && !isBoolString(args[i + 1])) { continue; } // bool option and next arg is not a bool
-				if (++i >= args.length) { return (`Missing value for option "${ args[i] }`); } // missing value
+				if (++i >= args.length) { return (`Missing value for option "${ args[i - 1] }"`); } // missing value
 				// consume this and the next arg as key and value of the option
 			} else { // aliased option
 				const alias = args[i].slice(-1);
 				const option = optionList.find(_=>_.alias === alias);
 				if (!option) { return (`Invaid option "${ args[i] }`); } // invalid option
 				if (option._type === Bool && !isBoolString(args[i + 1])) { continue; } // bool option and next arg is not a bool
-				if (++i >= args.length) { return (`Missing value for option "${ args[i] }`); } // missing value
+				if (++i >= args.length) { return (`Missing value for option "${ args[i - 1] }"`); } // missing value
 				// consume this and the next arg as key and value of the option
 			}
 		}
@@ -75,6 +76,9 @@ function parseArgs(args) {
 		} catch (string) { return `Invalid value for option ${ key }: ${ string.message || string }`; }
 	}
 	options.args = progArgs;
+
+	options.pipe && (options.detach = false);
+
 	return options;
 }
 
@@ -84,7 +88,7 @@ function showInfo(errorMessage) {
 	console.log(require('command-line-usage')([
 		errorMessage
 		? {
-			header: 'error',
+			header: 'Error',
 			content: errorMessage,
 		}
 		: {
@@ -119,7 +123,7 @@ function showInfo(errorMessage) {
 		{
 			header: 'Options',
 			optionList,
-		}
+		},
 	]));
 }
 

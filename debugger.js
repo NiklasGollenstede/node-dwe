@@ -7,6 +7,7 @@ const content = {
 	globalPath,
 	args: options.args.slice(),
 	pause: !!options.pause,
+	pipe: options.pipe,
 };
 
 try {
@@ -35,14 +36,13 @@ try {
 		content.args.unshift(options.bin);
 	} else {
 		if (options.args.length) {
-			content.entry = require.resolve(cwd +'/'+ options.args[0]);
+			content.entry = require.resolve(resolve(cwd, options.args[0]));
 			content.args.splice(0, 1, content.entry);
 		} else {
 			content.entry = null;
 		}
 	}
 } catch (error) {
-	console.error(error);
 	if (error instanceof Error) {
 		content.exception = { name: error.name, message: error.message, stack: error.stack, };
 	} else {
@@ -51,8 +51,8 @@ try {
 }
 
 {
-	const Electron = require('electron');
-	const { app: App, BrowserWindow, } = Electron;
+	const Electron = require('electron'), IPCStream = require('electron-ipc-stream');
+	const { app: App, BrowserWindow, ipcMain: IPC, } = Electron;
 	(options['exec-args'] || options.execArgs) && App.commandLine.appendSwitch('js-flags', (options['exec-args'] || options.execArgs || [ ]).map(_=>_.replace(/^-?-?/, '--')).join(' '));
 	let win = null;
 
@@ -66,17 +66,23 @@ try {
 			autoHideMenuBar: true,
 			show: !options.hidden,
 		});
+
+		(/o|c/).test(options.pipe) && new IPCStream('stdout', win).pipe(process.stdout);
+		(/e|c/).test(options.pipe) && new IPCStream('stderr', win).pipe(process.stderr);
+		(/i/)  .test(options.pipe) && IPC.once('stdin', () => {
+			require('fs').createReadStream(null, { fd: 3, }).pipe(new IPCStream('stdin', win));
+		});
+
+		let exitCode = 0; IPC.on('exit-code', (_, code) => (exitCode = code));
 		win.webContents.once('devtools-closed', () => win && win.close());
-		win.once('closed', () => win = null);
+		win.once('closed', () => process.exit(exitCode));
+
 		win.openDevTools({ detach: !!options.hidden, });
 		win.webContents.once('devtools-opened', () => win.loadURL(`data:text/html;base64,`+ new Buffer(`
 			<body style="background:#222"><script>'use strict';
 				(${ bootstrap })(${ JSON.stringify(content) })
 			</script></body>
 		`).toString('base64')));
-
-		// install dark devTools theme
-		require('electron-devtools-installer').default('bomhdjeadceaggdgfoefmpeafkjhegbo');
 	})
 	.catch(error => {
 		console.error(error.stack);
@@ -86,21 +92,23 @@ try {
 }
 
 // this is loaded inside the content process
-function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
-	const Path = require('path');
-	const Module = module.constructor;
+function bootstrap({ entry, args, cwd, pause, globalPath, exception, pipe, }) { try {
+	const Path = require('path'), IPC = require('electron').ipcRenderer;
+	const Module = module.constructor, { console, } = global;
 
 	if (exception) {
 		// log previous error
-		console.error(Object.assign(new window[exception.name](exception.message), exception));
+		console.error(Object.assign(new (global[exception.name] || Error)(exception.message), exception));
 		if (!cwd) { return; } entry = null; args = args || [ ];
 	}
 
 	// stop process.exit() from ending the process, navigate instead
 	process.reallyExit = function reallyExit(code) {
-		window.location.href = `data:text/html;base64,`+ btoa(`
+		IPC.send('exit-code', code);
+		const window = global, { document, } = window;
+		window.location.href = `data:text/html;base64,`+ window.btoa(`
 			<body style="background:#${ code ? '690c0c' : '1a690c' };color:white;font-family:sans-serif;"><script>'use strict'; (`+ ((code, back) => {
-				window.restart = () => window.location.href = back;
+				window.restart = () => (window.location.href = back);
 				console.info('Process was exited with code', code, 'call restart() to start again');
 				/* jshint evil: true */
 				document.write('<h3>Process was exited with code '+ code +'<br></h3>');
@@ -108,16 +116,33 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
 			}) +`)(${ +code }, "${ window.location.href }")<\/script>
 		`);
 	};
+	IPC.send('exit-code', 0);
+
+	if (pipe) { // forward stdio
+		const IPCStream = require('electron-ipc-stream');
+		const stdout = new IPCStream('stdout');
+		const stderr = new IPCStream('stderr');
+		const stdin  = new IPCStream('stdin');
+		// TODO: should expose a stream that is only writable or readable, not duplex
+		(/o/).test(pipe) && Object.defineProperty(process, 'stdout', { get() { return stdout; }, });
+		(/e/).test(pipe) && Object.defineProperty(process, 'stderr', { get() { return stderr; }, });
+		(/i/).test(pipe) && Object.defineProperty(process, 'stdin',  { get() { return stdin; }, });
+		(/i/).test(pipe) && IPC.send('stdin');
+		if ((/c/).test(pipe)) {
+			const console = new (require('console').Console)(stdout, stderr);
+			Object.defineProperty(global, 'console', { get() { return console; }, });
+		}
+	}
 
 	// replace the electron args with those meant for node
 	process.argv.splice(1, Infinity, ...args);
 	// and set __filename and __dirname for the console
 	if (entry) {
-		window.__filename = entry;
-		window.__dirname = Path.resolve(entry, '..');
+		global.__filename = entry;
+		global.__dirname = Path.resolve(entry, '..');
 	} else {
-		window.__dirname = cwd;
-		window.__filename = cwd + Path.sep +'.';
+		global.__dirname = cwd;
+		global.__filename = cwd + Path.sep +'.';
 		process.argv.splice(1, Infinity);
 	}
 
@@ -127,17 +152,17 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
 	if (!entry) { // no entry ==> nothing to require(), just set the correct environment
 		const module = new Module;
 		module.filename = __filename; module.loaded = true;
-		let paths = module.paths = [ ], parent = cwd, path = cwd; do {
+		const paths = module.paths = [ ]; let parent = cwd, path = cwd; do {
 			paths.push(Path.resolve(path = parent, 'node_modules'));
 		} while ((parent = Path.resolve(path, '..')) && parent !== path);
 		console.info('running in', __dirname);
-		return setMainModule(module);
+		return void setMainModule(module);
 	}
 
 	// set entry as the main module
 	const ext = Path.extname(__filename) || '.js';
 	const loader = Module._extensions[ext];
-	Module._extensions[ext] = function(module, filename) {
+	Module._extensions[ext] = function(module) {
 		Module._extensions[ext] = loader;
 		setMainModule(module);
 		let wrap = pause && Module.wrap; // inject debugger; statement
@@ -152,11 +177,12 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
 
 	// load the main module
 	Promise.resolve().then(() => {
+		console.info(`running with args: `, ...args.map(_=>`"${_}"`));
 		console.info(`exports = await require('${ entry }');`);
-		return (window.exports = require(entry));
+		return (global.exports = require(entry));
 	}).then(exports => {
 		console.info('exports resolved to:', exports);
-		window.exports = exports;
+		global.exports = exports;
 	})
 	.catch(error => {
 		console.error('exports rejected with:', error);
@@ -164,14 +190,14 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, }) { try {
 	});
 
 	function setMainModule(module) {
-		window.require = module.require.bind(module);
+		global.require = module.require.bind(module);
 		require.main = module;
 		require.resolve = function resolve(request) { return Module._resolveFilename(request, module); };
 		require.extensions = Module._extensions;
 		require.cache = Module._cache;
 		require.global = module => require(Path.join(globalPath, module));
 
-		window.module = process.mainModule = module;
+		global.module = process.mainModule = module;
 		module.id = '.'; module.parent = null;
 	}
 } catch (error) {
@@ -189,9 +215,9 @@ function getPaths(path) {
 }
 
 function findOnPaths(paths, find) {
-	let value, last = paths[paths.length - 1];
-	for (let path of paths) {
-		try { value = find(path, path === last); } catch (_) { }
+	const last = paths[paths.length - 1];
+	for (const path of paths) {
+		let value; try { value = find(path, path === last); } catch (_) { }
 		if (value != null) { return { value, path, }; }
 	}
 	return { };

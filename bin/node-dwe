@@ -4,10 +4,29 @@
 const options = require('../parse-args.js').getProcessOptions();
 options.cwd = process.cwd();
 
-const electron = require('../index.js')(options);
+const electron = require('../index.js')(options, options.pipe ? [
+	'ignore',
+	(/o|c/).test(options.pipe) ? process.stdout : 'ignore',
+	(/e|c/).test(options.pipe) ? process.stderr : 'ignore',
+	(/i/)  .test(options.pipe) ? process.stdin : 'ignore', // electron can't access fd 0 on windows
+] : null);
 
 if (options.detach) { electron.unref(); return; }
 
 electron.on('error', error => console.error(error));
+electron.once('exit', code => process.exit(code));
+
+/*
 electron.stdout.pipe(process.stdout);
 electron.stderr.pipe(process.stderr);
+
+electron.stdout.on('data', data => console.log('out', data));
+electron.stderr.on('data', data => console.log('err', data));
+*/
+
+/**
+ * For some reason, the electron main process seems to write '\r\n' to stdout (on windows).
+ * But on windows, the process also can't access stdin, so that needs to use a different fd, e.g. 3 (s.o.).
+ * That seems to require that stdout and stderr are passed directly (s.o.),
+ * which means there is no (easy?) way to truncate the '\r\n'.
+ */
