@@ -60,6 +60,7 @@ try {
 		const { width, height, } = Electron.screen.getPrimaryDisplay().workAreaSize;
 
 		win = new BrowserWindow({
+			webPreferences: { nodeIntegration: true, },
 			width: Math.min(width, height * 1.25) << 0,
 			height: Math.min(height, width) << 0,
 			title: [ options.bin || options.args[0], options.title, 'Debugger', ].filter(_=>_&&_!=='.').join(' - '),
@@ -93,6 +94,7 @@ try {
 
 // this is loaded inside the content process
 function bootstrap({ entry, args, cwd, pause, globalPath, exception, pipe, }) { try {
+	global.ELECTRON_DISABLE_SECURITY_WARNINGS = true;
 	const Path = require('path'), IPC = require('electron').ipcRenderer;
 	const Module = module.constructor, { console, } = global;
 
@@ -106,11 +108,11 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, pipe, }) { 
 	process.reallyExit = function reallyExit(code) {
 		IPC.send('exit-code', code);
 		const window = global, { document, } = window;
+		// TODO: this is broken in recent versions of electron
 		window.location.href = `data:text/html;base64,`+ window.btoa(`
 			<body style="background:#${ code ? '690c0c' : '1a690c' };color:white;font-family:sans-serif;"><script>'use strict'; (`+ ((code, back) => {
 				window.restart = () => (window.location.href = back);
 				console.info('Process was exited with code', code, 'call restart() to start again');
-				/* jshint evil: true */
 				document.write('<h3>Process was exited with code '+ code +'<br></h3>');
 				document.write('<h2><a style="color:#9c95fb" href="'+ back +'">RESTART</a></h2>');
 			}) +`)(${ +code }, "${ window.location.href }")<\/script>
@@ -176,7 +178,8 @@ function bootstrap({ entry, args, cwd, pause, globalPath, exception, pipe, }) { 
 	};
 
 	// load the main module
-	Promise.resolve().then(() => {
+	new Promise(wake => setTimeout(wake, 20)).then(() => {
+		delete global.ELECTRON_DISABLE_SECURITY_WARNINGS;
 		console.info(`running with args: `, ...args.map(_=>`"${_}"`));
 		console.info(`exports = await require('${ entry }');`);
 		return (global.exports = require(entry));
